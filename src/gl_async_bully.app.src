@@ -1,0 +1,11 @@
+%%% -*- mode: erlang -*-
+
+{application, gl_async_bully,
+ [
+  {description, "The gen_async_bully behaviour"},
+  {vsn, "0.1"},
+  {modules, [gl_async_bully]},
+  {registered, [ ]},
+  {applications, [ kernel, stdlib ] }
+ ]
+}.
