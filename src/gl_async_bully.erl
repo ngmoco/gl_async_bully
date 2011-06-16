@@ -33,6 +33,7 @@
          ,live_peers/1
          ,broadcast/2
          ,to_follower/3
+         ,to_followers/2
          ,to_other_followers/3
         ]).
 
@@ -120,6 +121,14 @@ to_follower(FNode, Msg, CI) ->
     leader = role(CI),
     gen_fsm:send_all_state_event(server_on(FNode, CI),
                                  {from_leader, node(), Msg}),
+    ok.
+
+-spec to_followers(term(), cluster_info()) -> 'ok'.
+to_followers(Msg, CI) ->
+    leader = role(CI),
+    [to_follower(Node, Msg, CI)
+     || Node <- live_peers(CI),
+        Node =/= node()],
     ok.
 
 -spec to_other_followers(node(), term(), cluster_info()) -> 'ok'.
