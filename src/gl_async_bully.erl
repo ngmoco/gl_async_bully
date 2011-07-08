@@ -4,10 +4,33 @@
 %% @version {@vsn}, {@date} {@time}
 %% @doc Attempts to implement the 'Asynchronous Bully Algorithm' from
 %% Scott D. Stoller's 1997 paper 'Leader Election in Distributed
-%% Systems with Crash Failures' [http://www.cs.sunysb.edu/~stoller/leader-election.html]
+%% Systems with Crash Failures'
+%% [http://www.cs.sunysb.edu/~stoller/leader-election.html]
 %%
 %% Notes:
-%%   Our failure detector is built on erlang:monitor_node
+%%   Our failure detector is built on erlang:monitor_node to detect
+%%   peer nodes as they connect and disconnect from us. On receiving
+%%   an up message from a peer we then monitor the leader election
+%%   control process on the new node (in the case that we are
+%%   interested in setting a FD on that node).
+%%
+%% Protocols:
+%%   1) Leader election.
+%%
+%% Ideas:
+%%   * Calls currently need to pass through the local node in order to
+%%     get to the leader. If this serialization of client calls
+%%     through the local node causes problems due to the high message
+%%     volume swamping the control messages, it may be necessary to
+%%     introduce an ets table containing the current identity of the
+%%     leader, or a second process that tracks the leader identity and
+%%     forwards calls appropriately.
+%%   * Another plan would be to split the control functionality into a
+%%     separate registered process. leader_call traffic could be split
+%%     into a third process if needed. This would give a process model
+%%     of control, message routing and API client processing in
+%%     separate processes. Would be tricky to implement and require
+%%     complex coordination.
 %% @end
 %%%-------------------------------------------------------------------
 -module(gl_async_bully).
