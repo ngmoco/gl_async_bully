@@ -395,6 +395,8 @@ handle_event({from_leader, Ldr, Event}, StateName, State) ->
                 {stop, _Reason, _NewState} = Err -> Err
             end;
         _ ->
+            %% XXX - should we have a callback to allow a client
+            %% module to deal with leader events from a stale leader
             ?ERR("Received a from_leader event "
                  "- stale, or incorrectly sent to self.~p",
                  [Event]),
