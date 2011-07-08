@@ -310,39 +310,39 @@ periodically(norm, #state{leader=Self,
 periodically(_StateName, _State) ->
     ok.
 
-handle_event({?MODULE, J, {halt, T}}, StateName,
+handle_event({gl_async_bully, J, {halt, T}}, StateName,
              State = #state{leader=Ldr,
                             elid=Elid})
   when StateName =:= norm, Ldr < J;
        StateName =:= wait, element(1, Elid) < J ->
     send(J, {rej, T}, State),
     {next_state, StateName, State};
-handle_event({?MODULE, J, {halt, T}}, _StateName,
+handle_event({gl_async_bully, J, {halt, T}}, _StateName,
              State = #state{}) ->
     halting(T, J, State);
 
-handle_event({?MODULE, J, downsig}, StateName,
+handle_event({gl_async_bully, J, downsig}, StateName,
              State = #state{elid=Elid,
                             leader=Ldr})
   when StateName =:= norm, J =:= Ldr;
        StateName =:= wait, J =:= element(1, Elid) ->
     start_stage2(State);
 
-handle_event({?MODULE, J, downsig}, elec2,
+handle_event({gl_async_bully, J, downsig}, elec2,
              State = #state{pendack=J}) ->
     contin_stage2(State);
 
-handle_event({?MODULE, J, {rej, _T}}, elec2,
+handle_event({gl_async_bully, J, {rej, _T}}, elec2,
              State = #state{pendack=J}) ->
     contin_stage2(State);
 
-handle_event({?MODULE, J, {ack, T}}, elec2,
+handle_event({gl_async_bully, J, {ack, T}}, elec2,
              State = #state{elid=T,
                             pendack=J,
                             acks=Acks}) ->
     contin_stage2(State#state{acks = ordsets:add_element(J, Acks)});
 
-handle_event({?MODULE, J, {leader, T}}, wait,
+handle_event({gl_async_bully, J, {leader, T}}, wait,
              State = #state{elid=T}) ->
     NewState = set_fds([J], State#state{leader=J}),
     case ms_event(surrendered, [J], NewState) of
@@ -352,7 +352,7 @@ handle_event({?MODULE, J, {leader, T}}, wait,
             Stop
     end;
 
-handle_event({?MODULE, J, {norm_p, T}}, StateName,
+handle_event({gl_async_bully, J, {norm_p, T}}, StateName,
              State = #state{elid=Elid,
                             leader = Leader})
   when StateName =/= norm, J < element(1, Elid);
@@ -360,13 +360,13 @@ handle_event({?MODULE, J, {norm_p, T}}, StateName,
     send(J, {not_norm, T}, State),
     {next_state, StateName, State};
 
-handle_event({?MODULE, J, {norm_p, T}}, StateName,
+handle_event({gl_async_bully, J, {norm_p, T}}, StateName,
              State = #state{elid = T,
                             leader = J}) ->
     %% Everything is fine.
     {next_state, StateName, State};
 
-handle_event({?MODULE, _J, {not_norm, T}}, norm,
+handle_event({gl_async_bully, _J, {not_norm, T}}, norm,
              State = #state{elid = T,
                             leader = Self})
   when Self =:= node() ->
@@ -502,7 +502,7 @@ handle_info({'DOWN', _, _, _, _} = Msg, StateName, State = #state{}) ->
     %% leader election algorithm
     case filter_nodedown(Msg, State) of
         {{down, J}, NewState} ->
-            handle_event({?MODULE, J, downsig},
+            handle_event({gl_async_bully, J, downsig},
                          StateName, NewState);
         {ignore, NewState} ->
             case ms_event(handle_info, [Msg], State) of
@@ -586,18 +586,18 @@ code_change(OldVsn, StateName, State = #state{ms={Mod,ModS}}, Extra) ->
 -spec send(atom(), proto_message(), #state{}) -> any().
 send(Node, Msg, #state{name=Name})
   when is_atom(Node), is_atom(Name) ->
-    gen_fsm:send_all_state_event({Name, Node}, {?MODULE, node(), Msg}).
+    gen_fsm:send_all_state_event({Name, Node}, control_message(Msg)).
 
 -spec play_dead({atom(), atom()}) -> 'ok'.
 play_dead({Name, Node}) ->
     erlang:send({Name, Node},
-                {nodedown, node(), [{?MODULE, {playing_dead, node()}}]}),
+                {nodedown, node(), [{gl_async_bully, {playing_dead, node()}}]}),
     ok.
 
 -spec play_alive({atom(), atom()}) -> 'ok'.
 play_alive({Name, Node}) ->
     erlang:send({Name, Node},
-                {nodeup, node(), [{?MODULE, {playing_alive, node()}}]}),
+                {nodeup, node(), [{gl_async_bully, {playing_alive, node()}}]}),
     ok.
 
 server_on(Node, #state{name=Name}) ->
