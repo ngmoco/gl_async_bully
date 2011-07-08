@@ -98,12 +98,18 @@
                 name = ?MODULE :: atom()
                }).
 
+%% @doc Leader election protocol message.
 -type proto_message() :: {halt, election_id()} |
                          {ack, election_id()} |
                          {rej, election_id()} |
                          {norm_p, election_id()} |
-                         {leader, election_id()} |
-                         {not_norm, election_id()}.
+                         {not_norm, election_id()} |
+                         {leader, election_id()}.
+
+%% @doc generic leader election protocol message. Includes ID of sender.
+-type control_message() :: {'gl_async_bully',
+                            Sender::node(),
+                            proto_message()}.
 
 -type proto_states() :: norm | wait | elec2.
 
@@ -717,3 +723,8 @@ format_mod_status(Fmt, #state{ms={Mod, ModS}}) ->
         false ->
             {Mod, [{state, ModS}]}
     end.
+
+-spec control_message(proto_message()) -> control_message().
+%% @doc Format a control_message from the local node.
+control_message(Msg) ->
+    {gl_async_bully, node(), Msg}.
