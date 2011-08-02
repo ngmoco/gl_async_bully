@@ -73,6 +73,14 @@
          handle_sync_event/4, handle_info/3, terminate/3, code_change/4,
          format_status/2]).
 
+%% @doc
+%% Modification to Stoller's algorithm. Instead of using a
+%% monotonically increasing integer preserved in stable storage across
+%% incarnations of this process, we use the result of erlang:now()
+%% captured at process recovery time. This will be unique to a node,
+%% will not go backwards and in Erlang can be compared in the same
+%% manner a single integer would be in Stoller's paper. This allows us
+%% to avoid the stable storage requirement.
 -type incarnation() :: {non_neg_integer(),
                         non_neg_integer(),
                         non_neg_integer()}.
