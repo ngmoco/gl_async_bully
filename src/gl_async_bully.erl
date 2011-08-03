@@ -16,6 +16,7 @@
 %%
 %% Protocols:
 %%   1) Leader election.
+%%      XXX - fill in rest of section.
 %%
 %% Ideas:
 %%   * Calls currently need to pass through the local node in order to
