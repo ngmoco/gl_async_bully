@@ -767,6 +767,10 @@ local_sync_bcast(From = {Pid, _Tag}, Reply, Msg, S = #state{acks=Acks}) ->
          Node =/= FromNode,
          lists:member(Node, nodes()) ].
 
+%% @doc gen_fsm:format_status/2 callback.
+%%
+%% Examines internal state to give easier to read output for
+%% sys:get_status(<Some gl_async_bully process>).
 format_status(Fmt, [_Dict, S = #state{name=Name,
                                       elid=Elid}]) ->
     [{name, Name},
