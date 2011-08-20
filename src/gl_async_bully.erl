@@ -433,6 +433,13 @@ handle_event({from_leader, Ldr, Event, {local_sync_reply, From, Reply}},
             Else
     end;
 
+handle_event({cast, Cast}, StateName, State) ->
+    case ms_event(handle_cast, [Cast], State) of
+        {ok, NewState} ->
+            {next_state, StateName, NewState};
+        {stop, Reason, NewState} ->
+            {stop, Reason, NewState}
+    end;
 
 handle_event(Msg, StateName, State) ->
     ?INFO("~p: ignored ~p", [StateName, Msg]),
