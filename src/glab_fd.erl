@@ -1,7 +1,6 @@
 %%%-------------------------------------------------------------------
 %% @copyright Geoff Cant
 %% @author Geoff Cant <nem@erlang.geek.nz>
-%% @version {@vsn}, {@date} {@time}
 %% @doc Implements (slightly?) unreliable failure detectors for the
 %% async bully algorithm used in gl_async_bully.
 %% @end

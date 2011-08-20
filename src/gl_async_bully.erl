@@ -1,24 +1,23 @@
 %%%-------------------------------------------------------------------
 %% @copyright Geoff Cant
 %% @author Geoff Cant <nem@erlang.geek.nz>
-%% @version {@vsn}, {@date} {@time}
 %% @doc Attempts to implement the 'Asynchronous Bully Algorithm' from
 %% Scott D. Stoller's 1997 paper 'Leader Election in Distributed
 %% Systems with Crash Failures'
 %% [http://www.cs.sunysb.edu/~stoller/leader-election.html]
 %%
-%% Notes:
+%% ==Notes==
 %%   Our failure detector is built on erlang:monitor_node to detect
 %%   peer nodes as they connect and disconnect from us. On receiving
 %%   an up message from a peer we then monitor the leader election
 %%   control process on the new node (in the case that we are
 %%   interested in setting a FD on that node).
 %%
-%% Protocols:
+%% ==Protocols==
 %%   1) Leader election.
 %%      XXX - fill in rest of section.
 %%
-%% Ideas:
+%% ==Ideas==
 %%   * Calls currently need to pass through the local node in order to
 %%     get to the leader. If this serialization of client calls
 %%     through the local node causes problems due to the high message
@@ -26,12 +25,87 @@
 %%     introduce an ets table containing the current identity of the
 %%     leader, or a second process that tracks the leader identity and
 %%     forwards calls appropriately.
+%%
 %%   * Another plan would be to split the control functionality into a
 %%     separate registered process. leader_call traffic could be split
 %%     into a third process if needed. This would give a process model
 %%     of control, message routing and API client processing in
 %%     separate processes. Would be tricky to implement and require
 %%     complex coordination.
+%%
+%% ==Callback API==
+%%    `init(Arguments) -> {ok, State} | {stop, Reason} | ignore'
+%%
+%%    Initialize the callback module's state.
+%%
+%%    <pre>handle_call(Msg, From, CI::cluster_info(), State) ->
+%%                                                    {reply, Reply, NewState} |
+%%                                                    {noreply, NewState} |
+%%                                                    {stop, Reply, Reason, NewState} |
+%%                                                    {stop, Reason, NewState}</pre>
+%%    Handle message from `gl_async_bully:call/2'.
+%%
+%%    <pre>handle_leader_call(Msg, From, CI::cluster_info(), State) ->
+%%                                                    {reply, Reply, NewState} |
+%%                                                    {reply, Reply, Broadcast, NewState} |
+%%                                                    {noreply, NewState} |
+%%                                                    {stop, Reply, Reason, NewState} |
+%%                                                    {stop, Reason, NewState}</pre>
+%%    Handle message from `gl_async_bully:leader_call/2,3' if this node is the
+%%    leader. The callback can return `{reply, Reply, Broadcast, NewState}'
+%%    and the `Broadcast' message will be sent to all peers. The method of
+%%    broadcast can be varied by using `leader_call/3'.
+%%
+%%    <pre>from_leader(Msg, CI::cluster_info(), State) ->
+%%                                                    {ok, NewState} |
+%%                                                    {stop, Reason, NewState}</pre>
+%%    Handle an event from the leader.
+%%
+%%    <pre>handle_cast(Msg, CI::cluster_info(), State) ->
+%%                                                    {ok, NewState} |
+%%                                                    {ok, Broadcast, NewState} |
+%%                                                    {stop, Reason, NewState}</pre>
+%%    Handle message from `gl_async_bully:cast/2'. If the node is the leader,
+%%    it can use the `{ok, BroasCast, NewState}' return type to broadcast to
+%%    the other peers.
+%%
+%%    <pre>handle_leader_cast(Msg, CI::cluster_info(), State) ->
+%%                                                    {ok, NewState} |
+%%                                                    {ok, Broadcast, NewState} |
+%%                                                    {stop, Reason, NewState}</pre>
+%%    Handle message from `gl_async_bully:leader_cast/2' if this node is the
+%%    leader.
+%%    See the note for `handle_cast/2' for details on the `{ok, Broadcast,
+%%    NewState}' return type.
+%%
+%%    <pre>handle_info(Msg, CI::cluster_info(), State) ->
+%%                                                    {ok, NewState} |
+%%                                                    {ok, Broadcast, NewState} |
+%%                                                    {stop, Reason, NewState}</pre>
+%%    Handle a message not sent via a call or a cast.
+%%    See the note for `handle_cast/2' for details on the `{ok, Broadcast,
+%%    NewState}' return type.
+%%
+%%    <pre>elected(CI::cluster_info, State) ->
+%%                                                    {ok, NewState} |
+%%                                                    {ok, Broadcast, NewState} |
+%%                                                    {stop, Reason, NewState}</pre>
+%%    Called when this node becomes the leader.
+%%    See the note for `handle_cast/2' for details on the `{ok, Broadcast,
+%%    NewState}' return type.
+%%
+%%    <pre>surrendered(Leader::node(), CI::cluster_info, State) ->
+%%                                                    {ok, NewState} |
+%%                                                    {stop, Reason, NewState}</pre>
+%%
+%%    Called when a different node is elected leader.
+%%
+%%    <pre>code_change(OldVsn, State, Extra) -> {ok, NewState}</pre>
+%%    Called to convert callback state when code is changed.
+%%
+%%    <pre>terminate(Reason, CI::cluster_info(), State) -> void()</pre>
+%%    Called when the gl_async_bully process is about to terminate. Any
+%%    cleanup should be done here. The return value is ignored.
 %% @end
 %%%-------------------------------------------------------------------
 -module(gl_async_bully).
@@ -75,7 +149,6 @@
          handle_sync_event/4, handle_info/3, terminate/3, code_change/4,
          format_status/2]).
 
-%% @doc
 %% Modification to Stoller's algorithm. Instead of using a
 %% monotonically increasing integer preserved in stable storage across
 %% incarnations of this process, we use the result of erlang:now()
@@ -108,7 +181,7 @@
                 name = ?MODULE :: atom()
                }).
 
-%% @doc Leader election protocol message.
+%% Leader election protocol message.
 -type proto_message() :: {halt, election_id()} |
                          {ack, election_id()} |
                          {rej, election_id()} |
@@ -116,7 +189,7 @@
                          {not_norm, election_id()} |
                          {leader, election_id()}.
 
-%% @doc generic leader election protocol message. Includes ID of sender.
+%% Generic leader election protocol message. Includes ID of sender.
 -type control_message() :: {'gl_async_bully',
                             Sender::node(),
                             proto_message()}.
@@ -134,22 +207,31 @@
 %%====================================================================
 %% API
 %%====================================================================
+%% @doc Start the gl_async_bully process.
+%% `Name' is the registered name the nodes will use, `Mod' is the callback
+%% module, `Arg' are the arguments to the callback module and `Net' is the
+%% list of candidate leaders.
 start_link(Name, Mod, Arg, Net) when is_list(Net) ->
     gen_fsm:start_link({local, Name}, ?MODULE, [Name, Mod, Arg, Net], []).
 
+%% @doc Get the processes' role in the cluster.
 -spec role(cluster_info()) -> 'leader' | 'follower'.
 role({Leader, _, _}) when Leader =:= node() -> leader;
 role({_,_,_}) -> follower.
 
+%% @doc Extract the leader from the cluster info.
 -spec leader(cluster_info()) -> node().
 leader({Leader,_,_}) -> Leader.
+%% @doc Extract the peers from the cluster info.
 -spec peers(cluster_info()) -> [node()].
 peers({_Ldr, Peers, _}) -> Peers.
+%% @doc Extract the live peers from the cluster info.
 -spec live_peers(cluster_info()) -> [node()].
 live_peers(CI) ->
     [ P || P <- peers(CI),
            lists:member(P, nodes())].
 
+%% @doc Broadcast a message to all alive peers.
 -spec broadcast(term(), cluster_info()) -> 'ok'.
 broadcast(Msg, CI) ->
     [erlang:send(server_on(Peer, CI), Msg)
@@ -157,6 +239,7 @@ broadcast(Msg, CI) ->
         Peer =/= node()],
     ok.
 
+%% @doc Send a message to follower `FNode'.
 -spec to_follower(node(), term(), cluster_info()) -> 'ok'.
 to_follower(FNode, Msg, CI) ->
     leader = role(CI),
@@ -164,6 +247,7 @@ to_follower(FNode, Msg, CI) ->
                                  {from_leader, node(), Msg}),
     ok.
 
+%% @doc Send a message to all followers.
 -spec to_followers(term(), cluster_info()) -> 'ok'.
 to_followers(Msg, CI) ->
     leader = role(CI),
@@ -172,6 +256,7 @@ to_followers(Msg, CI) ->
         Node =/= node()],
     ok.
 
+%% @doc Send a message to allow followers except for `ExceptNode'.
 -spec to_other_followers(node(), term(), cluster_info()) -> 'ok'.
 to_other_followers(ExceptNode, Msg, CI)
   when is_atom(ExceptNode) ->
@@ -183,16 +268,19 @@ to_other_followers(ExceptNode, Msg, CI)
     ok.
 
 
+%% @doc Make a call to the leader, proxied through local process
 -spec leader_call(atom(), term()) -> any().
 leader_call(Name, Msg) ->
     leader_call(Name, Msg, local_sync).
 
+%% @doc Make a call to the leader, proxied through local process
 -spec leader_call(atom(), term(), lc_proto()) -> any().
 leader_call(Name, Msg, Proto) when Proto =:= local_sync;
                                    Proto =:= leader_only ->
     gen_fsm:sync_send_all_state_event(Name,
                                       {leader_call, Proto, Msg}).
 
+%% @doc Make a cast to the leader
 -spec leader_cast(atom() | cluster_info(), term()) -> any().
 leader_cast(Name, Msg) when is_atom(Name) ->
     gen_fsm:send_all_state_event(Name,
@@ -202,19 +290,23 @@ leader_cast({Leader,_,_} = CI, Msg) ->
                                  {leader_cast, Msg}).
 
 
+%% @doc Make a call to the local async_bully process
 -spec call(atom(), term()) -> any().
 call(Name, Msg) ->
     gen_fsm:sync_send_all_state_event(Name,
                                       {call, Msg}).
 
+%% @doc Make a cast to the local async_bully process
 -spec cast(atom(), term()) -> any().
 cast(Name, Msg) ->
     gen_fsm:send_all_state_event(Name,
                                  {cast, Msg}).
 
+%% @doc Equivalent of gen_server/gen_fsm reply/2
 reply(From, Msg) ->
     gen_fsm:reply(From, Msg).
 
+%% @private
 behaviour_info(callbacks) ->
     [{init, 1},
      {handle_call, 4},
@@ -231,6 +323,7 @@ behaviour_info(callbacks) ->
 behaviour_info(_) ->
     undefined.
 
+%% @private
 %%====================================================================
 %% gen_fsm callbacks
 %%====================================================================
@@ -270,13 +363,18 @@ init([Name, Mod, Arg, Net]) when is_list(Net) ->
 %% called if a timeout occurs.
 %%--------------------------------------------------------------------
 
+%% @private
 recovery(timeout, State) ->
     start_stage2(reincarnate(State)).
 
+%% @private
 norm(_Evt, State) -> {next_state, norm, State}.
+%% @private
 elec2(_Evt, State) -> {next_state, elec2, State}.
+%% @private
 wait(_Evt, State) -> {next_state, wait, State}.
 
+%% @private
 halting(T, J, State = #state{peers = Peers, name = Name}) ->
     [play_dead({Name, N}) || N <- ordsets:to_list(Peers),
                              node() < N ],
@@ -327,6 +425,7 @@ periodically(norm, #state{leader=Self,
 periodically(_StateName, _State) ->
     ok.
 
+%% @private
 handle_event({gl_async_bully, J, {halt, T}}, StateName,
              State = #state{leader=Ldr,
                             elid=Elid})
@@ -487,6 +586,7 @@ handle_event(Msg, StateName, State) ->
 %% the event.
 %%--------------------------------------------------------------------
 
+%% @private
 handle_sync_event(force_recovery, From, _StateName, State) ->
     gen_fsm:reply(From, ok),
     start_stage2(reincarnate(State));
@@ -519,6 +619,7 @@ handle_sync_event({call, Call}, From, StateName, State) ->
 handle_sync_event(_Event, _From, StateName, State) ->
     {next_state, StateName, State}.
 
+%% @private
 %%--------------------------------------------------------------------
 %% Function:
 %% handle_info(Info,StateName,State)-> {next_state, NextStateName, NextState}|
@@ -529,7 +630,6 @@ handle_sync_event(_Event, _From, StateName, State) ->
 %% other message than a synchronous or asynchronous event
 %% (or a system message).
 %%--------------------------------------------------------------------
-
 handle_info({'DOWN', _, _, _, _} = Msg, StateName, State = #state{}) ->
     %% Check if this nodedown is relevant to the
     %% leader election algorithm
@@ -590,6 +690,7 @@ handle_info(Info, StateName, State) ->
             {stop, Reason, NewState}
     end.
 
+%% @private
 %%--------------------------------------------------------------------
 %% Function: terminate(Reason, StateName, State) -> void()
 %% Description:This function is called by a gen_fsm when it is about
@@ -603,6 +704,7 @@ terminate(Reason, StateName, S = #state{ms={Mod, ModS}}) ->
 terminate(_Reason, _StateName, #state{ms=undefined}) ->
     ok.
 
+%% @private
 %%--------------------------------------------------------------------
 %% Function:
 %% code_change(OldVsn, StateName, State, Extra) -> {ok, StateName, NewState}
@@ -770,7 +872,7 @@ local_sync_bcast(From = {Pid, _Tag}, Reply, Msg, S = #state{acks=Acks}) ->
 %% @doc gen_fsm:format_status/2 callback.
 %%
 %% Examines internal state to give easier to read output for
-%% sys:get_status(<Some gl_async_bully process>).
+%% sys:get_status(Some gl_async_bully process).
 format_status(Fmt, [_Dict, S = #state{name=Name,
                                       elid=Elid}]) ->
     [{name, Name},
